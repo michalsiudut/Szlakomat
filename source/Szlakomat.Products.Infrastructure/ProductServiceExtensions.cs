@@ -4,10 +4,12 @@ using Szlakomat.Products.Domain.Catalog.ProductType;
 using Szlakomat.Products.Domain.Catalog.PackageType;
 using Szlakomat.Products.Domain.CommercialOffer;
 using Szlakomat.Products.Domain.Instances;
+using Szlakomat.Products.Domain.Inventory;
 using Szlakomat.Products.Domain.Relationships;
 using Szlakomat.Products.Infrastructure.Catalog;
 using Szlakomat.Products.Infrastructure.CommercialOffer;
 using Szlakomat.Products.Infrastructure.Instances;
+using Szlakomat.Products.Infrastructure.Inventory;
 using Szlakomat.Products.Infrastructure.Relationships;
 using Szlakomat.Products.Infrastructure.Seed;
 
@@ -30,7 +32,9 @@ public static class ProductServiceExtensions
         services.AddSingleton<ICatalogEntryRepository>(catalogRepo);
         services.AddSingleton<IProductRelationshipRepository>(relationshipRepo);
         services.AddSingleton<IInstanceRepository>(new InMemoryInstanceRepository());
+        services.AddSingleton<IInventoryRepository>(new InMemoryInventoryRepository());
         services.AddSingleton(relationshipFactory);
+        services.AddSingleton(TimeProvider.System);
 
         services.AddMediatR(cfg =>
             cfg.RegisterServicesFromAssemblyContaining<ProductModule>());

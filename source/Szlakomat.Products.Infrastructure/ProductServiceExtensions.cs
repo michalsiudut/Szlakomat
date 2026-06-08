@@ -8,7 +8,6 @@ using Szlakomat.Products.Domain.Inventory;
 using Szlakomat.Products.Domain.Relationships;
 using Szlakomat.Products.Infrastructure.Catalog;
 using Szlakomat.Products.Infrastructure.CommercialOffer;
-using Szlakomat.Products.Infrastructure.Instances;
 using Szlakomat.Products.Infrastructure.Inventory;
 using Szlakomat.Products.Infrastructure.Relationships;
 using Szlakomat.Products.Infrastructure.Seed;

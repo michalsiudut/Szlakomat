@@ -71,7 +71,7 @@ public class InventoryLockingJourneyTests
         var lockResult = await _mediator.Send(new LockProduct(productId, "holder-A"));
         Assert.True(lockResult.IsSuccess());
 
-        var adjusted = await _mediator.Send(new AdjustStock(productId, +10)); // 10 → 20
+        var adjusted = await _mediator.Send(new AdjustStock(productId, +10));
         Assert.True(adjusted.IsSuccess());
 
         var view = await _mediator.Send(new FindInventoryCriteria(productId));
@@ -85,7 +85,7 @@ public class InventoryLockingJourneyTests
         var productId = await CreateAttraction();
         await _mediator.Send(new RegisterInventory(productId, 10));
 
-        var adjusted = await _mediator.Send(new AdjustStock(productId, -4)); // 10 → 6
+        var adjusted = await _mediator.Send(new AdjustStock(productId, -4));
         Assert.True(adjusted.IsSuccess());
 
         var view = await _mediator.Send(new FindInventoryCriteria(productId));
@@ -98,7 +98,7 @@ public class InventoryLockingJourneyTests
         var productId = await CreateAttraction();
         await _mediator.Send(new RegisterInventory(productId, 5));
 
-        var result = await _mediator.Send(new AdjustStock(productId, -10)); // would go below 0
+        var result = await _mediator.Send(new AdjustStock(productId, -10));
 
         Assert.False(result.IsSuccess());
     }
@@ -211,8 +211,7 @@ public class InventoryLockingJourneyTests
         var productId = await CreateAttraction();
         await _mediator.Send(new RegisterInventory(productId, 10));
 
-        // apply a positive delta
-        var adjusted = await _mediator.Send(new AdjustStock(productId, +5)); // → 15
+        var adjusted = await _mediator.Send(new AdjustStock(productId, +5));
         Assert.True(adjusted.IsSuccess());
 
         var locked = await _mediator.Send(new LockProduct(productId, null));

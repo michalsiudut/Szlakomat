@@ -1,6 +1,6 @@
 namespace Szlakomat.Products.Domain.Inventory;
 
-public class InventoryLockId
+internal sealed class InventoryLockId
 {
     public string Value { get; }
 

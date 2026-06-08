@@ -40,10 +40,20 @@ internal class ProductInventory
 
     public long RequestCount() => _requestCount;
 
-    public ProductInventory WithStock(StockLevel newStock)
+    public Result<string, ProductInventory> ApplyStockDelta(int delta)
     {
-        Guard.IsNotNull(newStock);
-        return new ProductInventory(_productId, newStock, _currentLock, _requestCount + 1);
+        try
+        {
+            var newStock = delta >= 0
+                ? _stock.Increase(delta)
+                : _stock.Decrease(-delta);
+            return Result<string, ProductInventory>.SuccessOf(
+                new ProductInventory(_productId, newStock, _currentLock, _requestCount + 1));
+        }
+        catch (ArgumentException ex)
+        {
+            return Result<string, ProductInventory>.FailureOf(ex.Message);
+        }
     }
 
     public Result<string, ProductInventory> TryLock(InventoryLock @lock)

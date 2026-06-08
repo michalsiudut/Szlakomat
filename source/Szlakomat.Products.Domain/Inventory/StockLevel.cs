@@ -17,8 +17,6 @@ internal class StockLevel
 
     public static StockLevel Empty() => new(0);
 
-    public StockLevel SetTo(int newTotal) => Of(newTotal);
-
     public StockLevel Increase(int by)
     {
         if (by < 0)

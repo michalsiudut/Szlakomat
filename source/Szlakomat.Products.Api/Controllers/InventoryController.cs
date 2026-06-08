@@ -4,9 +4,7 @@ using Szlakomat.Products.Api.Contracts.Inventory;
 using Szlakomat.Products.Api.Mappers;
 using Szlakomat.Products.Application.Inventory.AdjustStock;
 using Szlakomat.Products.Application.Inventory.FindInventory;
-using Szlakomat.Products.Application.Inventory.LockProduct;
 using Szlakomat.Products.Application.Inventory.RegisterInventory;
-using Szlakomat.Products.Application.Inventory.ReleaseLock;
 
 namespace Szlakomat.Products.Api.Controllers;
 
@@ -44,6 +42,7 @@ public class InventoryController(ISender mediator) : ControllerBase
             : NotFound();
     }
 
+    // Stock is adjusted by a signed delta: positive increases, negative decreases.
     [HttpPatch("{productId}/stock")]
     [ProducesResponseType(typeof(InventoryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -55,7 +54,7 @@ public class InventoryController(ISender mediator) : ControllerBase
             return NotFound();
         }
 
-        var result = await mediator.Send(new AdjustStock(productId, req.NewTotal));
+        var result = await mediator.Send(new AdjustStock(productId, req.Delta));
         if (!result.IsSuccess())
         {
             return BadRequest(new { error = result.GetFailure() });
@@ -63,56 +62,5 @@ public class InventoryController(ISender mediator) : ControllerBase
 
         return Ok(InventoryMapper.ToResponse(
             (await mediator.Send(new FindInventoryCriteria(productId)))!));
-    }
-
-    [HttpPost("{productId}/lock")]
-    [ProducesResponseType(typeof(LockProductResponse), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> Lock(string productId, LockProductRequest req)
-    {
-        if (await mediator.Send(new FindInventoryCriteria(productId)) is null)
-        {
-            return NotFound();
-        }
-
-        var result = await mediator.Send(new LockProduct(productId, req.HolderId));
-        if (result.IsSuccess())
-        {
-            return CreatedAtAction(
-                nameof(GetByProductId),
-                new { productId },
-                new LockProductResponse(result.SuccessValue.Value));
-        }
-
-        var error = result.GetFailure() ?? "unknown error";
-        return error.Contains("already locked", StringComparison.OrdinalIgnoreCase)
-            ? Conflict(new { error })
-            : BadRequest(new { error });
-    }
-
-    [HttpDelete("{productId}/lock/{lockId}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> Release(string productId, string lockId)
-    {
-        if (await mediator.Send(new FindInventoryCriteria(productId)) is null)
-        {
-            return NotFound();
-        }
-
-        var result = await mediator.Send(new ReleaseLock(productId, lockId));
-        if (result.IsSuccess())
-        {
-            return NoContent();
-        }
-
-        var error = result.GetFailure() ?? "unknown error";
-        return error.Contains("does not match", StringComparison.OrdinalIgnoreCase)
-            ? Conflict(new { error })
-            : BadRequest(new { error });
     }
 }

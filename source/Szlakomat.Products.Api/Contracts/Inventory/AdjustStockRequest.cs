@@ -1,3 +1,4 @@
 namespace Szlakomat.Products.Api.Contracts.Inventory;
 
-public record AdjustStockRequest(int NewTotal);
+// Positive delta adds stock; negative delta removes stock.
+public record AdjustStockRequest(int Delta);

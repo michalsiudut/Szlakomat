@@ -24,13 +24,6 @@ internal sealed class AdjustStockHandler
                 Result<string, string>.FailureOf("ProductId is required"));
         }
 
-        if (command.NewTotal < 0)
-        {
-            return Task.FromResult(
-                Result<string, string>.FailureOf(
-                    $"NewTotal cannot be negative: {command.NewTotal}"));
-        }
-
         var inventory = _inventoryRepository.FindByProductId(command.ProductId);
         if (inventory is null)
         {
@@ -39,8 +32,14 @@ internal sealed class AdjustStockHandler
                     $"Inventory not found for product: {command.ProductId}"));
         }
 
-        var updated = inventory.WithStock(StockLevel.Of(command.NewTotal));
-        _inventoryRepository.Save(updated);
+        var result = inventory.ApplyStockDelta(command.Delta);
+        if (result.IsFailure())
+        {
+            return Task.FromResult(
+                Result<string, string>.FailureOf(result.GetFailure()!));
+        }
+
+        _inventoryRepository.Save(result.SuccessValue);
         return Task.FromResult(
             Result<string, string>.SuccessOf(command.ProductId));
     }

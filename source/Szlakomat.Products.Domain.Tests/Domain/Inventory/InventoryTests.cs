@@ -25,14 +25,48 @@ public class InventoryTests
     }
 
     [Fact]
-    public void WithStock_ShouldUpdateStockAndIncrementRequestCount()
+    public void ApplyStockDelta_Positive_ShouldIncreaseStockAndIncrementRequestCount()
     {
         var inventory = ProductInventory.Initialize(ProductId, StockLevel.Of(10));
 
-        var updated = inventory.WithStock(StockLevel.Of(20));
+        var result = inventory.ApplyStockDelta(10);
 
-        updated.Stock().Total.Should().Be(20);
-        updated.RequestCount().Should().Be(1);
+        result.IsSuccess().Should().BeTrue();
+        result.SuccessValue.Stock().Total.Should().Be(20);
+        result.SuccessValue.RequestCount().Should().Be(1);
+    }
+
+    [Fact]
+    public void ApplyStockDelta_Negative_ShouldDecreaseStock()
+    {
+        var inventory = ProductInventory.Initialize(ProductId, StockLevel.Of(10));
+
+        var result = inventory.ApplyStockDelta(-3);
+
+        result.IsSuccess().Should().BeTrue();
+        result.SuccessValue.Stock().Total.Should().Be(7);
+    }
+
+    [Fact]
+    public void ApplyStockDelta_Zero_ShouldLeaveStockUnchanged()
+    {
+        var inventory = ProductInventory.Initialize(ProductId, StockLevel.Of(10));
+
+        var result = inventory.ApplyStockDelta(0);
+
+        result.IsSuccess().Should().BeTrue();
+        result.SuccessValue.Stock().Total.Should().Be(10);
+    }
+
+    [Fact]
+    public void ApplyStockDelta_BelowZero_ShouldFail()
+    {
+        var inventory = ProductInventory.Initialize(ProductId, StockLevel.Of(5));
+
+        var result = inventory.ApplyStockDelta(-10);
+
+        result.IsFailure().Should().BeTrue();
+        result.GetFailure()!.Should().Contain("zero");
     }
 
     [Fact]
@@ -119,17 +153,18 @@ public class InventoryTests
     }
 
     [Fact]
-    public void WithStock_OnLockedInventory_DoesNotAffectLock()
+    public void ApplyStockDelta_OnLockedInventory_DoesNotAffectLock()
     {
         var inventory = ProductInventory.Initialize(ProductId, StockLevel.Of(10));
         var @lock = MakeLock("thread-A");
         var locked = inventory.TryLock(@lock).SuccessValue;
 
-        var stockChanged = locked.WithStock(StockLevel.Of(50));
+        var result = locked.ApplyStockDelta(40);
 
-        stockChanged.IsLocked().Should().BeTrue();
-        stockChanged.CurrentLock()!.Id().Should().Be(@lock.Id());
-        stockChanged.Stock().Total.Should().Be(50);
+        result.IsSuccess().Should().BeTrue();
+        result.SuccessValue.IsLocked().Should().BeTrue();
+        result.SuccessValue.CurrentLock()!.Id().Should().Be(@lock.Id());
+        result.SuccessValue.Stock().Total.Should().Be(50);
     }
 }
 

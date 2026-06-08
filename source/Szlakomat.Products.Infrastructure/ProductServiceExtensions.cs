@@ -34,6 +34,7 @@ public static class ProductServiceExtensions
         services.AddSingleton<IInstanceRepository>(new InMemoryInstanceRepository());
         services.AddSingleton<IInventoryRepository>(new InMemoryInventoryRepository());
         services.AddSingleton(relationshipFactory);
+        services.AddSingleton<ITicketLockService, InMemoryTicketLockService>();
         services.AddSingleton(TimeProvider.System);
 
         services.AddMediatR(cfg =>

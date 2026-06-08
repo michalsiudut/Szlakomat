@@ -26,4 +26,9 @@ internal class InMemoryInstanceRepository : IInstanceRepository
     {
         return _storage.Values.ToList();
     }
+
+    public IReadOnlyList<IInstance> FindByBucketId(BucketId bucketId)
+    {
+        return _storage.Values.Where(i => i.BatchId()?.Value == bucketId.Value).ToList().AsReadOnly();
+    }
 }

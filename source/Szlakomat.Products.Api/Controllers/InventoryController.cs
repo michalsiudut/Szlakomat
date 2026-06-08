@@ -42,7 +42,6 @@ public class InventoryController(ISender mediator) : ControllerBase
             : NotFound();
     }
 
-    // Stock is adjusted by a signed delta: positive increases, negative decreases.
     [HttpPatch("{productId}/stock")]
     [ProducesResponseType(typeof(InventoryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

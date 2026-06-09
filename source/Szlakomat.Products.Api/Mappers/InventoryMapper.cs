@@ -6,5 +6,5 @@ namespace Szlakomat.Products.Api.Mappers;
 internal static class InventoryMapper
 {
     internal static InventoryResponse ToResponse(InventoryView v) =>
-        new(v.ProductId, v.StockTotal, v.IsLocked);
+        new(v.ProductId, v.StockTotal);
 }

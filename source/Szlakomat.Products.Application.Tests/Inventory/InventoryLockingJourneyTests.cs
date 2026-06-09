@@ -1,25 +1,31 @@
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using Szlakomat.Products.Application.Instances.CreateProductInstance;
 using Szlakomat.Products.Application.Inventory.AdjustStock;
 using Szlakomat.Products.Application.Inventory.FindInventory;
-using Szlakomat.Products.Application.Inventory.LockProduct;
+using Szlakomat.Products.Application.Inventory.ProcessBucket;
 using Szlakomat.Products.Application.Inventory.RegisterInventory;
-using Szlakomat.Products.Application.Inventory.ReleaseLock;
 using Szlakomat.Products.Application.Tests.Assemblers;
 using Szlakomat.Products.Application.Tests.Infrastructure;
+using Szlakomat.Products.Domain.Instances;
+using Szlakomat.Products.Domain.Inventory;
 
 namespace Szlakomat.Products.Application.Tests.Inventory;
 
 public class InventoryLockingJourneyTests
 {
+    private readonly IServiceProvider _provider;
     private readonly IMediator _mediator;
+    private readonly ITicketLockService _lockService;
 
     public InventoryLockingJourneyTests()
     {
-        _mediator = ServiceProviderFactory.Create().GetRequiredService<IMediator>();
+        _provider = ServiceProviderFactory.Create();
+        _mediator = _provider.GetRequiredService<IMediator>();
+        _lockService = _provider.GetRequiredService<ITicketLockService>();
     }
 
-    private async Task<string> CreateAttraction()
+    private async Task<string> CreateTimedEntryAttraction()
     {
         var productId = Guid.NewGuid().ToString();
         var result = await _mediator.Send(CatalogCommandAssembler.TimedEntryAttraction(productId));
@@ -27,10 +33,30 @@ public class InventoryLockingJourneyTests
         return productId;
     }
 
+    private async Task<string> CreateGroupAttraction()
+    {
+        var productId = Guid.NewGuid().ToString();
+        var result = await _mediator.Send(CatalogCommandAssembler.GroupAttraction(productId));
+        Assert.True(result.IsSuccess());
+        return productId;
+    }
+
+    private async Task<string> FillBucket(string productId, int instanceCount)
+    {
+        var bucketId = Guid.NewGuid().ToString();
+        for (var i = 0; i < instanceCount; i++)
+        {
+            var created = await _mediator.Send(
+                new CreateProductInstance(productId, null, bucketId, "1", "pcs", null));
+            Assert.True(created.IsSuccess());
+        }
+        return bucketId;
+    }
+
     [Fact]
     public async Task RegisterInventory_ForExistingProduct_ShouldSucceed()
     {
-        var productId = await CreateAttraction();
+        var productId = await CreateTimedEntryAttraction();
 
         var result = await _mediator.Send(new RegisterInventory(productId, 10));
 
@@ -38,7 +64,6 @@ public class InventoryLockingJourneyTests
         var view = await _mediator.Send(new FindInventoryCriteria(productId));
         Assert.NotNull(view);
         Assert.Equal(10, view!.StockTotal);
-        Assert.False(view.IsLocked);
     }
 
     [Fact]
@@ -54,7 +79,7 @@ public class InventoryLockingJourneyTests
     [Fact]
     public async Task RegisterInventory_TwiceForSameProduct_ShouldFailSecondTime()
     {
-        var productId = await CreateAttraction();
+        var productId = await CreateTimedEntryAttraction();
         await _mediator.Send(new RegisterInventory(productId, 10));
 
         var second = await _mediator.Send(new RegisterInventory(productId, 5));
@@ -64,25 +89,22 @@ public class InventoryLockingJourneyTests
     }
 
     [Fact]
-    public async Task AdjustStock_AppliesPositiveDelta_WithoutAffectingLock()
+    public async Task AdjustStock_AppliesPositiveDelta_IncreasesStock()
     {
-        var productId = await CreateAttraction();
+        var productId = await CreateTimedEntryAttraction();
         await _mediator.Send(new RegisterInventory(productId, 10));
-        var lockResult = await _mediator.Send(new LockProduct(productId, "holder-A"));
-        Assert.True(lockResult.IsSuccess());
 
         var adjusted = await _mediator.Send(new AdjustStock(productId, +10));
         Assert.True(adjusted.IsSuccess());
 
         var view = await _mediator.Send(new FindInventoryCriteria(productId));
         Assert.Equal(20, view!.StockTotal);
-        Assert.True(view.IsLocked);
     }
 
     [Fact]
     public async Task AdjustStock_AppliesNegativeDelta_ReducesStock()
     {
-        var productId = await CreateAttraction();
+        var productId = await CreateTimedEntryAttraction();
         await _mediator.Send(new RegisterInventory(productId, 10));
 
         var adjusted = await _mediator.Send(new AdjustStock(productId, -4));
@@ -95,7 +117,7 @@ public class InventoryLockingJourneyTests
     [Fact]
     public async Task AdjustStock_BelowZero_ShouldFail()
     {
-        var productId = await CreateAttraction();
+        var productId = await CreateTimedEntryAttraction();
         await _mediator.Send(new RegisterInventory(productId, 5));
 
         var result = await _mediator.Send(new AdjustStock(productId, -10));
@@ -104,124 +126,168 @@ public class InventoryLockingJourneyTests
     }
 
     [Fact]
-    public async Task LockProduct_OnExistingInventory_ShouldSucceedAndReturnLockId()
+    public async Task BucketLock_OnFreeBucket_IsGrantedToTheFirstHolder()
     {
-        var productId = await CreateAttraction();
-        await _mediator.Send(new RegisterInventory(productId, 10));
+        var bucket = BucketId.NewOne();
 
-        var result = await _mediator.Send(new LockProduct(productId, "holder-A"));
+        var ticket = await _lockService.TryAcquireFirstAvailableAsync(
+            new[] { bucket }, "processor-A", TimeSpan.FromMinutes(1));
+
+        Assert.NotNull(ticket);
+        Assert.Equal(bucket, ticket!.BucketId);
+        Assert.Equal("processor-A", ticket.LockedBy);
+    }
+
+    [Fact]
+    public async Task BucketLock_WhileHeld_CannotBeAcquiredAgain()
+    {
+        var bucket = BucketId.NewOne();
+        await _lockService.TryAcquireFirstAvailableAsync(new[] { bucket }, "processor-A", TimeSpan.FromMinutes(1));
+
+        var second = await _lockService.TryAcquireFirstAvailableAsync(new[] { bucket }, "processor-B", TimeSpan.FromMinutes(1));
+
+        Assert.Null(second);
+    }
+
+    [Fact]
+    public async Task BucketLock_PicksFirstAvailableBucket_SkippingHeldOnes()
+    {
+        var held = BucketId.NewOne();
+        var free = BucketId.NewOne();
+        await _lockService.TryAcquireFirstAvailableAsync(new[] { held }, "processor-A", TimeSpan.FromMinutes(1));
+
+        var ticket = await _lockService.TryAcquireFirstAvailableAsync(
+            new[] { held, free }, "processor-B", TimeSpan.FromMinutes(1));
+
+        Assert.NotNull(ticket);
+        Assert.Equal(free, ticket!.BucketId);
+    }
+
+    [Fact]
+    public async Task BucketLock_AfterRelease_CanBeAcquiredAgain()
+    {
+        var bucket = BucketId.NewOne();
+        var ticket = await _lockService.TryAcquireFirstAvailableAsync(new[] { bucket }, "processor-A", TimeSpan.FromMinutes(1));
+        Assert.NotNull(ticket);
+
+        var released = await _lockService.ReleaseAsync(ticket!.LockId);
+        Assert.True(released);
+
+        var reacquired = await _lockService.TryAcquireFirstAvailableAsync(new[] { bucket }, "processor-B", TimeSpan.FromMinutes(1));
+        Assert.NotNull(reacquired);
+    }
+
+    [Fact]
+    public async Task ProcessBucket_WhenGoesThrough_ConsumesStockForBucketInstances()
+    {
+        var productId = await CreateGroupAttraction();
+        await _mediator.Send(new RegisterInventory(productId, 100));
+        var bucketId = await FillBucket(productId, 3);
+
+        var result = await _mediator.Send(new ProcessBucket(bucketId, "fulfilment-service"));
 
         Assert.True(result.IsSuccess());
-        Assert.NotNull(result.SuccessValue);
-        Assert.StartsWith("LOCK-", result.SuccessValue);
+        var view = await _mediator.Send(new FindInventoryCriteria(productId));
+        Assert.Equal(97, view!.StockTotal);
     }
 
     [Fact]
-    public async Task LockProduct_AlreadyLocked_ShouldFailWithConflict()
+    public async Task ProcessBucket_WhenGoesThrough_ReleasesTheLock()
     {
-        var productId = await CreateAttraction();
-        await _mediator.Send(new RegisterInventory(productId, 10));
-        await _mediator.Send(new LockProduct(productId, "holder-A"));
+        var productId = await CreateGroupAttraction();
+        await _mediator.Send(new RegisterInventory(productId, 100));
+        var bucketId = await FillBucket(productId, 2);
 
-        var result = await _mediator.Send(new LockProduct(productId, "holder-B"));
+        await _mediator.Send(new ProcessBucket(bucketId, "fulfilment-service"));
+
+        var active = await _lockService.GetActiveLocksAsync();
+        Assert.DoesNotContain(active, t => t.BucketId.Value == Guid.Parse(bucketId));
+    }
+
+    [Fact]
+    public async Task ProcessBucket_WhileBucketIsLockedElsewhere_FailsAsBeingProcessed()
+    {
+        var productId = await CreateGroupAttraction();
+        await _mediator.Send(new RegisterInventory(productId, 100));
+        var bucketId = await FillBucket(productId, 1);
+        var held = await _lockService.TryAcquireFirstAvailableAsync(
+            new[] { BucketId.Of(bucketId) }, "other-system", TimeSpan.FromMinutes(1));
+        Assert.NotNull(held);
+
+        var result = await _mediator.Send(new ProcessBucket(bucketId, "fulfilment-service"));
 
         Assert.False(result.IsSuccess());
-        Assert.Contains("already locked", result.GetFailure()!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("already being processed", result.GetFailure()!);
+        var view = await _mediator.Send(new FindInventoryCriteria(productId));
+        Assert.Equal(100, view!.StockTotal);
     }
 
     [Fact]
-    public async Task LockProduct_ForUnknownInventory_ShouldFail()
+    public async Task ProcessBucket_AfterTheHoldingLockIsReleased_GoesThrough()
     {
-        var result = await _mediator.Send(new LockProduct("nonexistent", "holder-A"));
+        var productId = await CreateGroupAttraction();
+        await _mediator.Send(new RegisterInventory(productId, 100));
+        var bucketId = await FillBucket(productId, 1);
+        var held = await _lockService.TryAcquireFirstAvailableAsync(
+            new[] { BucketId.Of(bucketId) }, "other-system", TimeSpan.FromMinutes(1));
+        await _lockService.ReleaseAsync(held!.LockId);
+
+        var result = await _mediator.Send(new ProcessBucket(bucketId, "fulfilment-service"));
+
+        Assert.True(result.IsSuccess());
+        var view = await _mediator.Send(new FindInventoryCriteria(productId));
+        Assert.Equal(99, view!.StockTotal);
+    }
+
+    [Fact]
+    public async Task ProcessBucket_WhenWorkFallsThrough_LeavesStockUntouchedAndReleasesLock()
+    {
+        var productId = await CreateGroupAttraction();
+        await _mediator.Send(new RegisterInventory(productId, 2));
+        var bucketId = await FillBucket(productId, 3);
+
+        var result = await _mediator.Send(new ProcessBucket(bucketId, "fulfilment-service"));
 
         Assert.False(result.IsSuccess());
-        Assert.Contains("not found", result.GetFailure()!);
+        var view = await _mediator.Send(new FindInventoryCriteria(productId));
+        Assert.Equal(2, view!.StockTotal);
+        var active = await _lockService.GetActiveLocksAsync();
+        Assert.DoesNotContain(active, t => t.BucketId.Value == Guid.Parse(bucketId));
     }
 
     [Fact]
-    public async Task ReleaseLock_WithMatchingLockId_ShouldFreeResource()
+    public async Task ProcessBucket_ForUnknownBucket_FailsAsFallThrough()
     {
-        var productId = await CreateAttraction();
-        await _mediator.Send(new RegisterInventory(productId, 10));
-        var firstLock = await _mediator.Send(new LockProduct(productId, "holder-A"));
-        Assert.True(firstLock.IsSuccess());
+        var unknownBucket = Guid.NewGuid().ToString();
 
-        var release = await _mediator.Send(
-            new ReleaseLock(productId, firstLock.SuccessValue));
-        Assert.True(release.IsSuccess());
-
-        var reLock = await _mediator.Send(new LockProduct(productId, "holder-B"));
-        Assert.True(reLock.IsSuccess());
-    }
-
-    [Fact]
-    public async Task ReleaseLock_WithForeignLockId_ShouldFail()
-    {
-        var productId = await CreateAttraction();
-        await _mediator.Send(new RegisterInventory(productId, 10));
-        await _mediator.Send(new LockProduct(productId, "holder-A"));
-
-        var release = await _mediator.Send(
-            new ReleaseLock(productId, "LOCK-foreign-id"));
-
-        Assert.False(release.IsSuccess());
-        Assert.Contains("does not match", release.GetFailure()!);
-    }
-
-    [Fact]
-    public async Task ReleaseLock_OnUnlockedInventory_ShouldFail()
-    {
-        var productId = await CreateAttraction();
-        await _mediator.Send(new RegisterInventory(productId, 10));
-
-        var result = await _mediator.Send(new ReleaseLock(productId, "LOCK-ghost"));
+        var result = await _mediator.Send(new ProcessBucket(unknownBucket, "fulfilment-service"));
 
         Assert.False(result.IsSuccess());
-        Assert.Contains("not locked", result.GetFailure()!);
+        Assert.Contains("no instances", result.GetFailure()!);
     }
 
     [Fact]
-    public async Task ConcurrentLockAttempts_ExactlyOneShouldSucceed()
+    public async Task ConcurrentProcessing_OfTheSameBucket_LeavesStockConsistentWithSuccesses()
     {
-        var productId = await CreateAttraction();
-        await _mediator.Send(new RegisterInventory(productId, 10));
+        var productId = await CreateGroupAttraction();
+        await _mediator.Send(new RegisterInventory(productId, 100));
+        var bucketId = await FillBucket(productId, 5);
 
-        const int parallelism = 20;
+        const int parallelism = 16;
         var barrier = new Barrier(parallelism);
         var tasks = Enumerable.Range(0, parallelism)
             .Select(i => Task.Run(async () =>
             {
                 barrier.SignalAndWait();
-                return await _mediator.Send(new LockProduct(productId, $"thread-{i}"));
+                return await _mediator.Send(new ProcessBucket(bucketId, $"worker-{i}"));
             }))
             .ToArray();
 
         var results = await Task.WhenAll(tasks);
+
         var successes = results.Count(r => r.IsSuccess());
-
-        Assert.Equal(1, successes);
-
         var view = await _mediator.Send(new FindInventoryCriteria(productId));
-        Assert.True(view!.IsLocked);
-    }
-
-    [Fact]
-    public async Task LockCycle_WithIntermediateDeltaAdjustment_PreservesCorrectState()
-    {
-        var productId = await CreateAttraction();
-        await _mediator.Send(new RegisterInventory(productId, 10));
-
-        var adjusted = await _mediator.Send(new AdjustStock(productId, +5));
-        Assert.True(adjusted.IsSuccess());
-
-        var locked = await _mediator.Send(new LockProduct(productId, null));
-        Assert.True(locked.IsSuccess());
-
-        var released = await _mediator.Send(new ReleaseLock(productId, locked.SuccessValue));
-        Assert.True(released.IsSuccess());
-
-        var view = await _mediator.Send(new FindInventoryCriteria(productId));
-        Assert.Equal(15, view!.StockTotal);
-        Assert.False(view.IsLocked);
+        Assert.True(view!.StockTotal >= 0);
+        Assert.Equal(100 - successes * 5, view.StockTotal);
     }
 }

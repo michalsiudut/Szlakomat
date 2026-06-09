@@ -181,6 +181,14 @@ Zarządza **relacjami skierowanymi** między typami produktów. Pojedynczy agreg
 - `IProductRelationshipDefiningPolicy` bramkuje tworzenie (domyślnie: AlwaysAllow)
 - Zwraca `Result<string, ProductRelationship>` -- obsługa błędów zorientowana na tory kolejowe
 
+#### Inwentarz (`Inventory/`)
+
+Zarządza **stanem magazynowym** typów produktów oraz **przetwarzaniem bucketów** zgłaszanym przez inne systemy. Agregat: `ProductInventory` (z obiektem wartości `StockLevel`).
+
+- Rejestruje stan magazynowy dla istniejącego `ProductType`, śledzi sumaryczny `StockLevel`, stosuje delty stanu (`ApplyStockDelta`) z inwariantem „stan nie schodzi poniżej zera".
+- **Przetwarzanie bucketa** (`ProcessBucket`) to operacja, którą inny system wywołuje, aby skonsumować bucket instancji (`BucketId` z kontekstu Instancje) względem stanu magazynowego: instancje bucketa są grupowane po produkcie, a stan każdego produktu jest pomniejszany o liczbę jego instancji w buckecie.
+- **Lockowanie jest wewnętrznym podsystemem Inwentarza**, nie odrębnym kontekstem ani API. Jego zadaniem jest **lockowanie procesowanego bucketa** na czas operacji, aby żaden inny system nie przetwarzał tego samego bucketa równolegle. `ITicketLockService` wydaje `TicketLock` na pierwszy wolny bucket z listy kandydatów (z TTL i automatycznym wygasaniem). `ProcessBucketHandler` używa go poprawnie: **zakłada lock przed operacjami, a zwalnia go w bloku `finally`** — niezależnie od tego, czy operacja *przeszła* (bucket skonsumowany, stan pomniejszony) czy *odpadła* (porażka, stan nietknięty). Lock nigdy nie wycieka, a release jest gwarantowany również przy wyjątku.
+
 ### 3.3 Mapa kontekstu
 
 Katalog Produktów jest **upstream** dla wszystkich trzech innych kontekstów:
@@ -699,6 +707,7 @@ source/
 |   |-- CommercialOffer/                            # Agregat CatalogEntry
 |   |-- Instances/                                  # ProductInstance, PackageInstance, InstanceBuilder
 |   |-- Relationships/                              # ProductRelationship, polityki
+|   |-- Inventory/                                  # ProductInventory, StockLevel; ITicketLockService (wewn. lock bucketów)
 |   +-- Quantity/                                   # Obiekty wartości Quantity, Unit
 |
 |-- Szlakomat.Products.Application/                 # Polecenia/zapytania CQRS via MediatR
@@ -711,7 +720,8 @@ source/
 |   |   +-- FindByTrackingStrategy/
 |   |-- CommercialOffer/
 |   |-- Instances/
-|   +-- Relationships/
+|   |-- Relationships/
+|   +-- Inventory/                                  # RegisterInventory, AdjustStock, FindInventory, ProcessBucket (lock wewn.)
 |
 |-- Szlakomat.Products.Infrastructure/              # Repozytoria w pamięci, setup DI, dane seed
 |
@@ -720,7 +730,8 @@ source/
 |       |-- ProductsController.cs
 |       |-- CatalogController.cs
 |       |-- InstancesController.cs
-|       +-- RelationshipsController.cs
+|       |-- RelationshipsController.cs
+|       +-- InventoryController.cs
 |
 |-- Szlakomat.Products.Domain.Tests/                # xUnit + FluentAssertions
 |   +-- Domain/ValueObjects/
@@ -773,6 +784,12 @@ source/
 | `RelationshipsController` | POST | `/api/relationships` | Definiuj relację (wymaga `fromIdentifierType` + `toIdentifierType`: `UUID`/`ISBN`/`GTIN`/`INSPIRE`) |
 | `RelationshipsController` | GET | `/api/relationships?from=...` | Pobierz relacje od produktu (zwraca `ProductRelationshipView`) |
 | `RelationshipsController` | DELETE | `/api/relationships/{id}` | Usuń relację |
+| `InventoryController` | POST | `/api/inventory` | Zarejestruj stan magazynowy dla typu produktu |
+| `InventoryController` | GET | `/api/inventory/{productId}` | Pobierz stan magazynowy produktu |
+| `InventoryController` | PATCH | `/api/inventory/{productId}/stock` | Skoryguj stan magazynowy o deltę |
+| `InventoryController` | POST | `/api/inventory/buckets/{bucketId}/process` | Przetwórz (skonsumuj) bucket instancji względem stanu magazynowego |
+
+> **Lockowanie bucketów nie jest endpointem API.** Jest wewnętrznym podsystemem kontekstu Inwentarz, używanym przez `ProcessBucket` do zabezpieczenia bucketa na czas przetwarzania. API Inwentarza udostępnia wyłącznie sensowne operacje magazynowe (rejestracja, odczyt, korekta stanu, przetworzenie bucketa) — nie wystawia operacji lockowania.
 
 **Przykład żądania** -- definiuj typ produktu:
 

@@ -5,5 +5,5 @@ namespace Szlakomat.Products.Application.Inventory.Common;
 internal static class InventoryMapper
 {
     internal static InventoryView ToView(ProductInventory inventory) =>
-        new(inventory.ProductId(), inventory.Stock().Total, inventory.IsLocked());
+        new(inventory.ProductId(), inventory.Stock().Total);
 }

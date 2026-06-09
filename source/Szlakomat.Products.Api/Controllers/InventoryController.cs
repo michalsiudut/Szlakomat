@@ -4,6 +4,7 @@ using Szlakomat.Products.Api.Contracts.Inventory;
 using Szlakomat.Products.Api.Mappers;
 using Szlakomat.Products.Application.Inventory.AdjustStock;
 using Szlakomat.Products.Application.Inventory.FindInventory;
+using Szlakomat.Products.Application.Inventory.ProcessBucket;
 using Szlakomat.Products.Application.Inventory.RegisterInventory;
 
 namespace Szlakomat.Products.Api.Controllers;
@@ -61,5 +62,16 @@ public class InventoryController(ISender mediator) : ControllerBase
 
         return Ok(InventoryMapper.ToResponse(
             (await mediator.Send(new FindInventoryCriteria(productId)))!));
+    }
+
+    [HttpPost("buckets/{bucketId}/process")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> ProcessBucket(string bucketId, ProcessBucketRequest req)
+    {
+        var result = await mediator.Send(new ProcessBucket(bucketId, req.RequestedBy));
+        return result.IsSuccess()
+            ? Ok(new { bucketId, status = "processed" })
+            : Conflict(new { error = result.GetFailure() });
     }
 }
